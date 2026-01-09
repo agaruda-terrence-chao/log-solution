@@ -1,0 +1,16 @@
+source 'https://rubygems.org'
+
+ruby '~> 3.2'
+
+# Fluentd 核心和测试框架
+gem 'fluentd', '~> 1.17'
+gem 'test-unit', '~> 3.5'
+
+# Fluentd 测试驱动（用于单元测试）
+gem 'fluent-plugin-test-driver', '~> 1.0'
+
+# Fluentd 插件（用于测试验证）
+gem 'fluent-plugin-opensearch', '~> 1.1'
+gem 'fluent-plugin-rewrite-tag-filter', '~> 2.4'
+gem 'fluent-plugin-grep', '~> 0.3'
+

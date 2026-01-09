@@ -1,0 +1,15 @@
+# OpenSearch Dashboards Configuration
+# This file contains settings for OpenSearch Dashboards
+
+# Specifies locale to be used for all localizable strings, dates and number formats.
+# Supported languages are the following: English - en , by default , Chinese - zh-CN .
+i18n.locale: "en"
+
+# Server host - 监听所有网络接口
+server.host: "0.0.0.0"
+
+# OpenSearch hosts - 使用服务名连接
+opensearch.hosts: ["http://opensearch:9200"]
+
+opensearch.ssl.verificationMode: none
+
