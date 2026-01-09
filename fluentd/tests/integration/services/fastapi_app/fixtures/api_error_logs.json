@@ -1,0 +1,25 @@
+[
+  {
+    "log": "[FASTAPI-APP] 2026-01-07 10:00:00 - ERROR - /test - ERROR - Invalid query parameter 'invalid' | timestamp=2026-01-07T10:00:00Z | status=400 | message=Query parameter must be 'yolo'",
+    "container_name": "fastapi-app",
+    "api_path": "/test",
+    "query": "invalid",
+    "status_code": 400,
+    "error_type": "validation_error"
+  },
+  {
+    "log": "[FASTAPI-APP] 2026-01-07 10:00:01 - ERROR - /test - ERROR - validation failed: required field missing",
+    "container_name": "fastapi-app",
+    "api_path": "/test",
+    "status_code": 400,
+    "error_type": "validation_error"
+  },
+  {
+    "log": "[FASTAPI-APP] 2026-01-07 10:00:02 - ERROR - /api/data - ERROR - Internal server error",
+    "container_name": "fastapi-app",
+    "api_path": "/api/data",
+    "status_code": 500,
+    "error_type": "general_error"
+  }
+]
+

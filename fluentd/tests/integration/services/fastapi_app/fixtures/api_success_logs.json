@@ -1,0 +1,23 @@
+[
+  {
+    "log": "[FASTAPI-APP] 2026-01-07 10:00:00 - INFO - /test - SUCCESS - Query parameter is 'yolo' | timestamp=2026-01-07T10:00:00Z | status=200 | message=Request processed successfully",
+    "container_name": "fastapi-app",
+    "api_path": "/test",
+    "query": "yolo",
+    "status_code": 200
+  },
+  {
+    "log": "[FASTAPI-APP] 2026-01-07 10:00:01 - INFO - /health - Health check passed",
+    "container_name": "fastapi-app",
+    "api_path": "/health",
+    "status_code": 200
+  },
+  {
+    "log": "[FASTAPI-APP] 2026-01-07 10:00:02 - INFO - /test - SUCCESS - Query parameter is 'yolo' | timestamp=2026-01-07T10:00:02Z | status=200 | message=Request processed successfully",
+    "container_name": "fastapi-app",
+    "api_path": "/test",
+    "query": "yolo",
+    "status_code": 200
+  }
+]
+

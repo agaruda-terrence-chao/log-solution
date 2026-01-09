@@ -1,33 +1,67 @@
 # Fluentd ETL Tests
 
-这个目录包含 Fluentd 配置文件的测试，专注于验证 ETL 处理逻辑的正确性。
+這個目錄包含 Fluentd 配置文件的測試，專注於驗證 `conf.d/` 中各微服務的 ETL 處理邏輯。
 
-## 测试内容
+## 測試結構
 
-### 1. ETL 逻辑单元测试 (`test_etl_logic.rb`)
+```
+tests/
+├── test_config_syntax.rb              # 配置語法驗證
+├── test_helper.rb                      # 測試輔助函數
+├── unit/                               # 單元測試（通用邏輯）
+│   └── filters/
+│       └── test_common_filters.rb     # 通用 Filter 邏輯測試
+├── integration/                        # 整合測試（按微服務）
+│   └── services/
+│       └── fastapi_app/
+│           ├── test_fastapi_app_etl.rb
+│           └── fixtures/
+│               ├── api_success_logs.json
+│               └── api_error_logs.json
+├── Makefile
+├── test.sh
+└── Gemfile
+```
 
-测试 `conf2/fluent.conf` 中的 ETL 处理逻辑：
+## 設計理念
 
-- ✅ **基础字段添加** - 验证 @APP 标签是否正确添加 service_name、etl_node 等字段
-- ✅ **错误检测逻辑** - 验证是否能正确识别 ERROR 日志并设置 log_level、is_error、error_category
-- ✅ **错误分类** - 验证是否能区分 validation_error 和 general_error
-- ✅ **系统指标处理** - 验证 @SYSTEM 标签是否正确处理系统指标数据
-- ✅ **错误告警字段** - 验证 @APP_ERRORS 标签是否正确添加告警字段
-- ✅ **完整处理链** - 验证从输入到输出的完整 ETL 流程
+### 分層結構
+- **單元測試（unit/）**：測試所有微服務共用的通用 Filter 邏輯（如 record_transformer、grep），可復用
+- **整合測試（integration/services/）**：按微服務組織，測試每個微服務的完整 ETL 流程
 
-### 2. 配置语法验证 (`test_config_syntax.rb`)
+### 可擴展性
+- 新增微服務時，只需在 `integration/services/` 下創建對應目錄和測試文件
+- 通用邏輯的測試在 `unit/` 中，無需重複編寫
 
-验证配置文件的语法和结构：
+## 測試內容
 
+### 1. 配置語法驗證 (`test_config_syntax.rb`)
+
+驗證配置文件的語法和結構：
 - ✅ 配置文件是否存在
 - ✅ 必需的 sections 和 labels 是否存在
-- ✅ 必需的插件是否正确配置
+- ✅ conf.d/ 目錄結構
 - ✅ Label 路由是否完整
-- ✅ XML 结构是否正确
 
-## 快速开始
+### 2. 單元測試 (`unit/filters/test_common_filters.rb`)
 
-### 方法 1: 使用测试脚本（推荐，适合 CI/CD）
+測試所有微服務共用的 Filter 邏輯：
+- ✅ Record Transformer - 基礎字段添加
+- ✅ Record Transformer - 錯誤檢測邏輯
+- ✅ Grep Filter - 過濾錯誤日誌
+
+### 3. 整合測試 (`integration/services/`)
+
+按微服務測試完整的 ETL 流程：
+
+#### FastAPI App (`fastapi_app/test_fastapi_app_etl.rb`)
+- ✅ 成功日誌處理（`/test` API）
+- ✅ 錯誤日誌處理（`/test` API）
+- ✅ 完整 Pipeline（@APP → @APP_ERRORS）
+
+## 快速開始
+
+### 方法 1: 使用測試腳本（推薦，適合 CI/CD）
 
 ```bash
 cd playground/log-solution/fluentd/tests
@@ -39,166 +73,75 @@ chmod +x test.sh
 
 ```bash
 cd playground/log-solution/fluentd/tests
-make test          # 运行所有测试
-make test-etl      # 只运行 ETL 逻辑测试
-make test-syntax   # 只运行语法验证
+make test              # 運行所有測試
+make test-syntax       # 只運行配置語法驗證
+make test-unit         # 只運行單元測試
+make test-integration  # 只運行整合測試
+make test-fastapi      # 只運行 FastAPI 測試
 ```
 
-### 方法 3: 直接运行 Ruby 测试（需要本地环境）
+### 方法 3: 直接運行 Ruby 測試
 
 ```bash
 cd playground/log-solution/fluentd/tests
 bundle install
-ruby test_etl_logic.rb      # ETL 逻辑测试
-ruby test_config_syntax.rb  # 语法验证
+ruby test_config_syntax.rb
+ruby unit/filters/test_common_filters.rb
+ruby integration/services/fastapi_app/test_fastapi_app_etl.rb
+```
+
+## 添加新微服務測試
+
+當在 `conf.d/` 中添加新的微服務配置時（如 `service-user-service.conf`），按以下步驟添加測試：
+
+1. **創建測試目錄和文件**：
+```bash
+mkdir -p integration/services/user_service/fixtures
+touch integration/services/user_service/test_user_service_etl.rb
+```
+
+2. **編寫測試文件**（參考 `fastapi_app/test_fastapi_app_etl.rb`）：
+```ruby
+require_relative '../../../test_helper'
+
+class UserServiceETLTest < Test::Unit::TestCase
+  def test_user_service_etl
+    # 測試邏輯
+  end
+end
+```
+
+3. **運行測試**：
+```bash
+make test-integration
+# 或
+ruby integration/services/user_service/test_user_service_etl.rb
 ```
 
 ## CI/CD 集成
 
-### GitHub Actions
+GitHub Actions 工作流已配置在 `.github/workflows/fluentd-test.yml`，會自動運行測試。
 
-GitHub Actions 工作流已配置在 `playground/log-solution/fluentd/.github/workflows/test.yml`，会自动运行测试。
+## 文件說明
 
-### GitLab CI
-
-在 `.gitlab-ci.yml` 中添加:
-
-```yaml
-fluentd_test:
-  image: docker:latest
-  services:
-    - docker:dind
-  script:
-    - cd playground/log-solution/fluentd/tests
-    - chmod +x test.sh
-    - ./test.sh
-  only:
-    changes:
-      - playground/log-solution/fluentd/**/*
-```
-
-## 测试输出示例
-
-```
-======================================
-Fluentd ETL Logic Tests
-======================================
-
-测试目录: /path/to/tests
-配置文件: /path/to/conf2/fluent.conf
-
---------------------------------------
-测试: 配置语法验证
-文件: test_config_syntax.rb
---------------------------------------
-Loaded suite test_config_syntax
-Started
-...
-Finished in 0.123456 seconds.
-
-4 tests, 4 assertions, 0 failures, 0 errors
-✅ 配置语法验证 通过
-
---------------------------------------
-测试: ETL 逻辑单元测试
-文件: test_etl_logic.rb
---------------------------------------
-Loaded suite test_etl_logic
-Started
-...
-Finished in 0.234567 seconds.
-
-8 tests, 24 assertions, 0 failures, 0 errors
-✅ ETL 逻辑单元测试 通过
-
-======================================
-✅ 所有测试通过！
-配置文件已验证，ETL 逻辑正确
-```
-
-## 文件说明
-
-- `test_etl_logic.rb` - **主要测试文件**，测试 ETL 处理逻辑
-- `test_config_syntax.rb` - 配置语法验证测试
-- `test.sh` - 统一的测试运行脚本（适合 CI/CD）
-- `Makefile` - 便捷的测试命令
-- `Gemfile` - Ruby 测试依赖
-
-## 部署到 ArgoCD
-
-### CI/CD 流程
-
-1. **提交代码**：修改 `conf2/fluent.conf` 后提交到 Git
-2. **自动测试**：GitHub Actions 自动运行测试（`.github/workflows/test.yml`）
-3. **测试通过**：如果所有测试通过，代码可以合并到主分支
-4. **ArgoCD 同步**：ArgoCD 会自动检测到 Helm Chart 的变化并同步到 Kubernetes
-
-### 手动部署流程
-
-如果测试通过，可以手动部署：
-
-```bash
-# 1. 运行测试确保配置正确
-cd playground/log-solution/fluentd/tests
-make test
-
-# 2. 构建 Docker 镜像（如果需要）
-cd ../..
-docker build -t registry.internal.agaruda.io/agaruda/fluentd-aggregator:latest \
-  -f fluentd/Dockerfile fluentd/
-
-# 3. 推送镜像到 Harbor
-docker push registry.internal.agaruda.io/agaruda/fluentd-aggregator:latest
-
-# 4. 使用 Helm 部署到 K8S
-cd charts/fluentd-aggregator
-make install
-```
-
-### ArgoCD Application 配置
-
-如果需要通过 ArgoCD 自动部署，创建 Application 配置：
-
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: fluentd-aggregator
-  namespace: argocd
-spec:
-  project: default
-  source:
-    repoURL: https://github.com/Agaruda/devops-app-helm.git
-    targetRevision: main
-    path: charts/fluentd-aggregator
-    helm:
-      releaseName: fluentd-aggregator
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: log-solution
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-      - CreateNamespace=true
-```
-
-**注意**：部署前确保：
-- ✅ 所有测试通过：`make test`
-- ✅ 配置文件语法正确：`make test-syntax`
-- ✅ ETL 逻辑测试通过：`make test-etl`
+- `test_config_syntax.rb` - 配置語法驗證測試
+- `test_helper.rb` - 測試輔助函數（創建驅動器、載入 fixtures 等）
+- `unit/filters/test_common_filters.rb` - 通用 Filter 邏輯測試（可復用）
+- `integration/services/*/test_*_etl.rb` - 各微服務的 ETL 整合測試
+- `test.sh` - 統一的測試運行腳本（適合 CI/CD）
+- `Makefile` - 便捷的測試命令
+- `Gemfile` - Ruby 測試依賴
 
 ## 故障排查
 
-### 测试失败
+### 測試失敗
 
-1. **依赖问题**: 运行 `bundle install` 安装依赖
-2. **Docker 问题**: 确保 Docker 可用，或使用本地 Ruby 环境
-3. **配置文件路径**: 确保 `conf2/fluent.conf` 存在
+1. **依賴問題**: 運行 `bundle install` 安裝依賴
+2. **Docker 問題**: 確保 Docker 可用，或使用本地 Ruby 環境
+3. **配置文件路徑**: 確保 `conf2/fluent.conf` 和 `conf.d/*.conf` 存在
 
-### 常见问题
+### 常見問題
 
-- **插件缺失**: 确保 Dockerfile 中安装了所有必需的插件
-- **语法错误**: 检查配置文件中的 XML 标签是否正确关闭
-- **标签路由错误**: 确认所有 `@label` 指令指向存在的 label
+- **插件缺失**: 確保 Dockerfile 中安裝了所有必需的插件
+- **語法錯誤**: 檢查配置文件中的 XML 標籤是否正確關閉
+- **標籤路由錯誤**: 確認所有 `@label` 指令指向存在的 label
