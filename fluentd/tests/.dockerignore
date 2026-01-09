@@ -1,0 +1,8 @@
+# 忽略不需要的文件，加快 Docker 构建
+.bundle/
+vendor/
+*.log
+Gemfile.lock
+.git/
+.DS_Store
+

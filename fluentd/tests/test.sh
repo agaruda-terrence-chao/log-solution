@@ -13,7 +13,7 @@ echo "Fluentd ETL Logic Tests"
 echo "======================================"
 echo ""
 echo "測試目錄: $TESTS_DIR"
-echo "配置文件: $FLUENTD_DIR/conf2/fluent.conf"
+echo "配置文件: $FLUENTD_DIR/conf/fluent2.conf"
 echo ""
 
 cd "$TESTS_DIR"

@@ -31,7 +31,7 @@ services:
     build: ./fluentd
     container_name: log-solution-fluentd-2
     volumes:
-      - ./fluentd/conf2/fluent.conf:/fluentd/etc/fluent.conf:ro
+      - ./fluentd/conf/fluent2.conf:/fluentd/etc/fluent.conf:ro
       - ./fluentd/conf.d:/fluentd/etc/conf.d:ro
       - ./fluentd/buffers:/fluentd/buffers
       - ./fluentd/logs:/fluentd/logs

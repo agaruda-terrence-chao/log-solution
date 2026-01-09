@@ -175,9 +175,9 @@ module FluentdTestHelper
     end
   end
 
-  # 加載微服務配置文件的路徑輔助函數
+  # 加載微服務配置文件的路徑輔助函數: service-fastapi-app-2.conf
   def get_service_config_path(service_name)
-    config_file = File.join(__dir__, '..', 'conf.d', "service-#{service_name}.conf")
+    config_file = File.join(__dir__, '..', 'conf.d', "service-#{service_name}-2.conf")
     unless File.exist?(config_file)
       raise "Config file not found: #{config_file}"
     end

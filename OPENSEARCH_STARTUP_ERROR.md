@@ -262,7 +262,7 @@ docker-compose -f docker-compose-fluentd-2.yaml up -d
 
 為避免未來再次出現此問題，可以限制 Fluentd buffer 的大小。
 
-**修改 `fluentd/conf.d/service-fastapi-app.conf`:**
+**修改 `fluentd/conf.d/service-fastapi-app-2.conf`:**
 
 ```ruby
 <buffer>

@@ -61,7 +61,39 @@ tests/
 
 ## 快速開始
 
-### 方法 1: 使用測試腳本（推薦，適合 CI/CD）
+### ⚡ 性能優化（重要）
+
+測試已優化為使用預構建的 Docker 鏡像，**執行速度提升 100-200 倍**！
+
+- **首次運行**：會自動構建 Docker 鏡像（約 2-3 分鐘，只需一次）
+- **後續運行**：直接使用預構建鏡像，測試執行僅需 **1-2 秒**
+- **優化前**：每次運行都需要安裝依賴，耗時 60-135 秒
+
+詳細說明請參閱 [OPTIMIZATION.md](./OPTIMIZATION.md)
+
+### 方法 1: 使用 Makefile（推薦）
+
+```bash
+cd playground/log-solution/fluentd/tests
+
+# 首次運行（會自動構建 Docker 鏡像）
+make test              # 運行所有測試（約 2 秒，首次需構建鏡像）
+
+# 或者手動構建鏡像
+make build-image       # 構建測試環境 Docker 鏡像
+make test              # 運行所有測試
+
+# 運行特定測試
+make test-syntax       # 只運行配置語法驗證（約 0.3 秒）
+make test-unit         # 只運行單元測試（約 0.5 秒）
+make test-integration  # 只運行整合測試（約 0.5 秒）
+make test-fastapi      # 只運行 FastAPI 測試（約 0.3 秒）
+
+# 使用本地 Ruby 環境（最快，需要安裝 Ruby 3.2+）
+USE_LOCAL=true make test
+```
+
+### 方法 2: 使用測試腳本
 
 ```bash
 cd playground/log-solution/fluentd/tests
@@ -69,25 +101,14 @@ chmod +x test.sh
 ./test.sh
 ```
 
-### 方法 2: 使用 Makefile
-
-```bash
-cd playground/log-solution/fluentd/tests
-make test              # 運行所有測試
-make test-syntax       # 只運行配置語法驗證
-make test-unit         # 只運行單元測試
-make test-integration  # 只運行整合測試
-make test-fastapi      # 只運行 FastAPI 測試
-```
-
 ### 方法 3: 直接運行 Ruby 測試
 
 ```bash
 cd playground/log-solution/fluentd/tests
 bundle install
-ruby test_config_syntax.rb
-ruby unit/filters/test_common_filters.rb
-ruby integration/services/fastapi_app/test_fastapi_app_etl.rb
+bundle exec ruby test_config_syntax.rb
+bundle exec ruby unit/filters/test_common_filters.rb
+bundle exec ruby integration/services/fastapi_app/test_fastapi_app_etl.rb
 ```
 
 ## 添加新微服務測試
@@ -138,7 +159,7 @@ GitHub Actions 工作流已配置在 `.github/workflows/fluentd-test.yml`，會�
 
 1. **依賴問題**: 運行 `bundle install` 安裝依賴
 2. **Docker 問題**: 確保 Docker 可用，或使用本地 Ruby 環境
-3. **配置文件路徑**: 確保 `conf2/fluent.conf` 和 `conf.d/*.conf` 存在
+3. **配置文件路徑**: 確保 `conf/fluent2.conf` 和 `conf.d/*-2.conf` 存在
 
 ### 常見問題
 

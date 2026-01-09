@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 #
 # Configuration Syntax Validation Test
-# 验证 fluentd/conf2/fluent.conf 的语法是否正确
+# 验证 fluentd/conf/fluent2.conf 的语法是否正确
 #
 
 require 'test/unit'
@@ -10,7 +10,7 @@ require 'test/unit'
 class FluentdConfigSyntaxTest < Test::Unit::TestCase
   
   def setup
-    @config_file = File.expand_path(File.join(__dir__, '..', 'conf2', 'fluent.conf'))
+    @config_file = File.expand_path(File.join(__dir__, '..', 'conf', 'fluent2.conf'))
   end
 
   # ============================================================
@@ -54,14 +54,14 @@ class FluentdConfigSyntaxTest < Test::Unit::TestCase
     assert service_configs.length > 0, "conf.d/ 目录应该包含至少一个微服务配置文件"
     
     # 检查 fastapi-app 配置
-    fastapi_config = File.join(conf_d_dir, 'service-fastapi-app.conf')
-    assert File.exist?(fastapi_config), "应该有 service-fastapi-app.conf 配置文件"
+    fastapi_config = File.join(conf_d_dir, 'service-fastapi-app-2.conf')
+    assert File.exist?(fastapi_config), "应该有 service-fastapi-app-2.conf 配置文件"
     
     # 检查配置文件内容
     if File.exist?(fastapi_config)
       content = File.read(fastapi_config)
-      assert_match(/<label @APP>/, content, "service-fastapi-app.conf 应该包含 @APP label")
-      assert_match(/<label @APP_ERRORS>/, content, "service-fastapi-app.conf 应该包含 @APP_ERRORS label")
+      assert_match(/<label @APP>/, content, "service-fastapi-app-2.conf 应该包含 @APP label")
+      assert_match(/<label @APP_ERRORS>/, content, "service-fastapi-app-2.conf 应该包含 @APP_ERRORS label")
     end
   end
 

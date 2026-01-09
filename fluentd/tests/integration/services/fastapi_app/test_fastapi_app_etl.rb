@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 # -*- coding: utf-8 -*-
 # test_fastapi_app_etl.rb - FastAPI 應用的完整 ETL 流程測試
-# 測試 conf.d/service-fastapi-app.conf 的 ETL 邏輯
+# 測試 conf.d/service-fastapi-app-2.conf 的 ETL 邏輯
 
 require_relative '../../../test_helper'
 require 'fluent/plugin/filter_grep'
