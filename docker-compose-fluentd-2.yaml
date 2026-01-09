@@ -34,6 +34,7 @@ services:
       - ./fluentd/conf2/fluent.conf:/fluentd/etc/fluent.conf:ro
       - ./fluentd/conf.d:/fluentd/etc/conf.d:ro
       - ./fluentd/buffers:/fluentd/buffers
+      - ./fluentd/logs:/fluentd/logs
     ports:
       - "24224:24224"      # Fluentd Forward Protocol
       - "24224:24224/udp"  # UDP 支持

@@ -84,6 +84,123 @@ module FluentdTestHelper
     assert_equal expected_service, record["service_name"]
     assert_equal "false", record["is_error"], "is_error 應該是 false"
   end
+
+  # ============================================================
+  # 配置文件加載輔助函數
+  # ============================================================
+
+  # 從配置文件提取特定 label 的 filter 配置
+  def load_filter_config_from_file(config_file_path, label_name, filter_tag = nil, filter_type = nil)
+    content = File.read(config_file_path)
+    
+    # 提取 label 區塊
+    label_pattern = /<label\s+#{Regexp.escape(label_name)}>(.*?)<\/label>/m
+    label_match = content.match(label_pattern)
+    
+    return nil unless label_match
+    
+    label_content = label_match[1]
+    
+    # 如果指定了 filter_tag，只提取該 filter
+    if filter_tag
+      # 如果指定了 filter_type，需要匹配特定的 filter 類型
+      if filter_type
+        # 匹配所有符合 filter_tag 的 filter，然後找到符合 filter_type 的
+        filter_pattern = /<filter\s+#{Regexp.escape(filter_tag)}>(.*?)<\/filter>/m
+        label_content.scan(filter_pattern) do |filter_content|
+          # 檢查是否包含指定的 filter_type
+          if filter_content[0].include?("@type #{filter_type}")
+            return filter_content[0].strip
+          end
+        end
+        return nil
+      else
+        # 只匹配第一個符合 filter_tag 的 filter
+        filter_pattern = /<filter\s+#{Regexp.escape(filter_tag)}>(.*?)<\/filter>/m
+        filter_match = label_content.match(filter_pattern)
+        return filter_match ? filter_match[1].strip : nil
+      end
+    else
+      # 返回整個 label 內容
+      return label_content.strip
+    end
+  end
+
+  # 從配置文件提取特定 filter 的 <record> 部分
+  def extract_record_config_from_filter(filter_config)
+    record_pattern = /<record>(.*?)<\/record>/m
+    record_match = filter_config.match(record_pattern)
+    return record_match ? record_match[1].strip : nil
+  end
+
+  # 創建完整的 filter 配置（用於測試）
+  def create_test_filter_config(record_config, options = {})
+    enable_ruby = options[:enable_ruby] != false
+    filter_tag = options[:filter_tag] || "**"
+    
+    conf = ""
+    conf += "enable_ruby true\n" if enable_ruby
+    conf += "<record>\n"
+    conf += record_config
+    conf += "\n</record>\n"
+    
+    conf
+  end
+
+  # 從實際配置文件加載並創建測試用的 filter driver
+  def create_filter_driver_from_config_file(config_file_path, label_name, filter_tag, plugin_class = Fluent::Plugin::RecordTransformerFilter, filter_type = "record_transformer")
+    # 提取 filter 配置（如果指定了 filter_type，會匹配特定類型的 filter）
+    filter_config = load_filter_config_from_file(config_file_path, label_name, filter_tag, filter_type)
+    raise "Filter config not found: #{label_name}/#{filter_tag} (type: #{filter_type})" unless filter_config
+    
+    # 如果是 record_transformer，提取 <record> 部分
+    if filter_type == "record_transformer"
+      record_config = extract_record_config_from_filter(filter_config)
+      raise "Record config not found in filter" unless record_config
+      
+      # 為測試環境調整配置（例如替換 Socket.gethostname）
+      # 注意：在配置字符串中，Socket.gethostname 會被替換為 test-host
+      # 匹配兩種格式：#{Socket.gethostname} 和 "#{Socket.gethostname}"
+      test_record_config = record_config.gsub(/#\{Socket\.gethostname\}/, "test-host")
+      test_record_config = test_record_config.gsub(/"#\{Socket\.gethostname\}"/, '"test-host"')
+      
+      # 創建測試配置
+      test_conf = create_test_filter_config(test_record_config, enable_ruby: true)
+      
+      # 創建並返回 driver
+      create_filter_driver(plugin_class, test_conf)
+    else
+      # 對於其他類型的 filter（如 grep），直接使用配置
+      create_filter_driver(plugin_class, filter_config)
+    end
+  end
+
+  # 加載微服務配置文件的路徑輔助函數
+  def get_service_config_path(service_name)
+    config_file = File.join(__dir__, '..', 'conf.d', "service-#{service_name}.conf")
+    unless File.exist?(config_file)
+      raise "Config file not found: #{config_file}"
+    end
+    config_file
+  end
+
+  # 從配置文件提取 grep filter 配置
+  def extract_grep_filter_config(config_file_path, label_name)
+    label_content = load_filter_config_from_file(config_file_path, label_name)
+    return nil unless label_content
+    
+    # 提取 grep filter（匹配 <filter **> 到 </filter>）
+    grep_pattern = /<filter\s+\*\*>(.*?)<\/filter>/m
+    grep_match = label_content.match(grep_pattern)
+    return nil unless grep_match
+    
+    # 檢查是否為 grep filter
+    filter_content = grep_match[1]
+    return nil unless filter_content.include?("@type grep")
+    
+    # 返回完整的 filter 配置
+    return "<filter **>#{filter_content}</filter>"
+  end
 end
 
 # 包含到所有測試類

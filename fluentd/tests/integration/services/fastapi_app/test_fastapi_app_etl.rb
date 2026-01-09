@@ -8,6 +8,11 @@ require 'fluent/plugin/filter_grep'
 
 class FastAPIAppETLTest < Test::Unit::TestCase
   
+  # 加載配置文件路徑（只加載一次）
+  def setup
+    @config_file = get_service_config_path("fastapi-app")
+  end
+  
   # ============================================================
   # Test 1: /test API - 成功請求的 ETL 處理
   # ============================================================
@@ -22,22 +27,8 @@ class FastAPIAppETLTest < Test::Unit::TestCase
       "status_code" => 200
     }
     
-    # 執行 ETL 轉換（對應 conf.d/service-fastapi-app.conf 中的 @APP label）
-    # 使用與實際配置完全相同的格式（使用單引號字符串避免轉義問題）
-    conf = <<~'CONF'
-      enable_ruby true
-      <record>
-        hostname "test-host"
-        service_name "fastapi-app"
-        log_content ${record["log"] || record["message"] || ""}
-        is_error ${ (record["log"].to_s =~ /ERROR/ || record["message"].to_s =~ /ERROR/) ? "true" : "false" }
-        api_endpoint ${if record["log"]; record["log"].match(/-\s+(\/[^\s]+)\s+-/); $1; elsif record["api_path"]; record["api_path"]; else; ""; end}
-        status_code ${if record["log"]; m = record["log"].match(/status=(\d+)/); m ? m[1] : ""; elsif record["status_code"]; record["status_code"].to_s; else; ""; end}
-        is_health_check ${(record["log"] && record["log"].include?("/health")) || (record["api_path"] == "/health") ? "true" : "false"}
-      </record>
-    CONF
-    
-    d = create_filter_driver(Fluent::Plugin::RecordTransformerFilter, conf)
+    # 直接從配置文件加載 @APP label 的 filter 配置
+    d = create_filter_driver_from_config_file(@config_file, "@APP", "fastapi.app")
     time = event_time("2026-01-07 10:00:00 UTC")
     
     d.run(default_tag: 'fastapi.app') do
@@ -74,21 +65,8 @@ class FastAPIAppETLTest < Test::Unit::TestCase
       "status_code" => 400
     }
     
-    # 使用與實際配置相同的 @APP label 配置
-    conf = <<~'CONF'
-      enable_ruby true
-      <record>
-        hostname "test-host"
-        service_name "fastapi-app"
-        log_content ${record["log"] || record["message"] || ""}
-        is_error ${ (record["log"].to_s =~ /ERROR/ || record["message"].to_s =~ /ERROR/) ? "true" : "false" }
-        api_endpoint ${if record["log"]; record["log"].match(/-\s+(\/[^\s]+)\s+-/); $1; elsif record["api_path"]; record["api_path"]; else; ""; end}
-        status_code ${if record["log"]; m = record["log"].match(/status=(\d+)/); m ? m[1] : ""; elsif record["status_code"]; record["status_code"].to_s; else; ""; end}
-        is_health_check ${(record["log"] && record["log"].include?("/health")) || (record["api_path"] == "/health") ? "true" : "false"}
-      </record>
-    CONF
-    
-    d = create_filter_driver(Fluent::Plugin::RecordTransformerFilter, conf)
+    # 直接從配置文件加載
+    d = create_filter_driver_from_config_file(@config_file, "@APP", "fastapi.app")
     time = event_time("2026-01-07 10:00:00 UTC")
     
     d.run(default_tag: 'fastapi.app') do
@@ -118,22 +96,8 @@ class FastAPIAppETLTest < Test::Unit::TestCase
       "status_code" => 400
     }
     
-    # Step 1: @APP label 處理 - 添加基礎字段和錯誤檢測
-    # 使用與實際配置相同的 @APP label 配置
-    app_conf = <<~'CONF'
-      enable_ruby true
-      <record>
-        hostname "test-host"
-        service_name "fastapi-app"
-        log_content ${record["log"] || record["message"] || ""}
-        is_error ${ (record["log"].to_s =~ /ERROR/ || record["message"].to_s =~ /ERROR/) ? "true" : "false" }
-        api_endpoint ${if record["log"]; record["log"].match(/-\s+(\/[^\s]+)\s+-/); $1; elsif record["api_path"]; record["api_path"]; else; ""; end}
-        status_code ${if record["log"]; m = record["log"].match(/status=(\d+)/); m ? m[1] : ""; elsif record["status_code"]; record["status_code"].to_s; else; ""; end}
-        is_health_check ${(record["log"] && record["log"].include?("/health")) || (record["api_path"] == "/health") ? "true" : "false"}
-      </record>
-    CONF
-    
-    d1 = create_filter_driver(Fluent::Plugin::RecordTransformerFilter, app_conf)
+    # Step 1: 從配置文件加載 @APP label 的 filter
+    d1 = create_filter_driver_from_config_file(@config_file, "@APP", "fastapi.app")
     d1.run(default_tag: 'fastapi.app') do
       d1.feed(time, input_log)
     end
@@ -143,13 +107,9 @@ class FastAPIAppETLTest < Test::Unit::TestCase
     assert_equal "fastapi-app", step1_result["service_name"], "應該有 service_name"
     # 注意：error_category 是在 @APP_ERRORS label 中添加的，不在 @APP label
     
-    # Step 2: @APP_ERRORS label 處理 - 過濾非錯誤日誌
-    grep_conf = <<~'CONF'
-      <exclude>
-        key is_error
-        pattern /^false$/
-      </exclude>
-    CONF
+    # Step 2: 從配置文件加載 @APP_ERRORS label 的 grep filter
+    grep_conf = extract_grep_filter_config(@config_file, "@APP_ERRORS")
+    raise "Grep filter config not found" unless grep_conf
     
     d2 = create_filter_driver(Fluent::Plugin::GrepFilter, grep_conf)
     d2.run(default_tag: 'app.error') do
@@ -159,23 +119,12 @@ class FastAPIAppETLTest < Test::Unit::TestCase
     step2_result = d2.filtered_records[0]
     assert_equal "true", step2_result["is_error"], "應該通過 grep 過濾"
     
-    # Step 3: @APP_ERRORS label 處理 - 添加告警字段
-    # 確保 step2_result 包含所有必要字段（grep filter 會保留所有字段，只是過濾記錄）
-    # 如果 log 字段丟失，從原始輸入恢復
+    # Step 3: 從配置文件加載 @APP_ERRORS label 的 record_transformer
     step2_result["log"] = input_log["log"] if step2_result["log"].nil? || step2_result["log"].empty?
     step2_result["service_name"] = "fastapi-app" if step2_result["service_name"].nil?
     
-    errors_conf = <<~'CONF'
-      enable_ruby true
-      <record>
-        alert_priority "HIGH"
-        troubleshoot_hint "Check FastAPI logs for tracebacks"
-        error_index_type "fastapi-error-logs"
-        error_category ${if record["log"] && record["log"].include?("ERROR"); record["log"].include?("validation") ? "validation_error" : "general_error"; else; ""; end}
-      </record>
-    CONF
-    
-    d3 = create_filter_driver(Fluent::Plugin::RecordTransformerFilter, errors_conf)
+    # 明確指定 filter_type 為 record_transformer，因為 @APP_ERRORS 中有兩個 filter
+    d3 = create_filter_driver_from_config_file(@config_file, "@APP_ERRORS", "**", Fluent::Plugin::RecordTransformerFilter, "record_transformer")
     d3.run(default_tag: 'app.error.detected') do
       d3.feed(time, step2_result)
     end
@@ -188,5 +137,34 @@ class FastAPIAppETLTest < Test::Unit::TestCase
     assert_equal "validation_error", final_result["error_category"], "應該識別為 validation_error"
     assert_equal "HIGH", final_result["alert_priority"], "應該有告警優先級"
     assert_equal "fastapi-error-logs", final_result["error_index_type"], "應該有錯誤索引類型"
+  end
+  
+  # ============================================================
+  # Test 4: 錯誤處理 - 異常輸入處理
+  # ============================================================
+  def test_error_handling_malformed_input
+    # 測試 nil 和空值輸入
+    input_log = {
+      "log" => nil,
+      "message" => "",
+      # 缺少其他字段
+    }
+    
+    d = create_filter_driver_from_config_file(@config_file, "@APP", "fastapi.app")
+    time = event_time("2026-01-07 10:00:00 UTC")
+    
+    # 應該不會拋出異常，配置文件中的 rescue 應該處理
+    assert_nothing_raised do
+      d.run(default_tag: 'fastapi.app') do
+        d.feed(time, input_log)
+      end
+    end
+    
+    result = d.filtered_records[0]
+    assert_not_nil result, "即使輸入異常，也應該產生輸出記錄"
+    assert_equal "fastapi-app", result["service_name"]
+    # 錯誤處理應該確保這些字段有默認值
+    assert_not_nil result["log_content"]
+    assert_not_nil result["is_error"]
   end
 end
