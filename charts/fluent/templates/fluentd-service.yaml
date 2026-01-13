@@ -1,0 +1,25 @@
+{{- if .Values.fluentd.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fluent.fullname" . }}-fluentd
+  labels:
+    {{- include "fluent.fluentd.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.fluentd.service.type }}
+  ports:
+    - port: {{ .Values.fluentd.service.ports.forward.port }}
+      targetPort: forward
+      protocol: {{ .Values.fluentd.service.ports.forward.protocol }}
+      name: forward
+    - port: {{ .Values.fluentd.service.ports.forwardUDP.port }}
+      targetPort: forward-udp
+      protocol: {{ .Values.fluentd.service.ports.forwardUDP.protocol }}
+      name: forward-udp
+    - port: {{ .Values.fluentd.service.ports.http.port }}
+      targetPort: http
+      protocol: {{ .Values.fluentd.service.ports.http.protocol }}
+      name: http
+  selector:
+    {{- include "fluent.fluentd.selectorLabels" . | nindent 4 }}
+{{- end }}

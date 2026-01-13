@@ -1,0 +1,7 @@
+apiVersion: v2
+name: fluent
+fullnameOverride: fluent
+description: Unified Fluent logging stack (fluent-bit-sidecar + fluentd) for order-app and user-app logs
+type: application
+version: 0.1.0
+appVersion: "1.17"

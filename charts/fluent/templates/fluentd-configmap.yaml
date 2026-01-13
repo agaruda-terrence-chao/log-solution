@@ -1,0 +1,414 @@
+{{- if .Values.fluentd.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "fluent.fullname" . }}-fluentd-config
+  labels:
+    {{- include "fluent.fluentd.labels" . | nindent 4 }}
+data:
+  fluent.conf: |
+    <system>
+      log_level {{ .Values.fluentd.config.system.logLevel }}
+      workers {{ .Values.fluentd.config.system.workers }}
+    </system>
+
+    # ============================================================
+    # 1. 數據來源 (Sources)
+    # ============================================================
+
+    # 接收來自 fluent-bit-sidecar 的 forward 協議日誌
+    <source>
+      @type forward
+      bind 0.0.0.0
+      port {{ .Values.fluentd.ports.forward }}
+      # 所有來自 fluent-bit 的日誌先進入 @FLUENT_BIT label 進行路由
+      @label @FLUENT_BIT
+    </source>
+
+    # ============================================================
+    # 2. 載入微服務配置（按服務拆分）
+    # ============================================================
+    @include conf.d/*-3.conf
+
+    # ============================================================
+    # 3. Fluent-bit 日誌路由處理
+    # ============================================================
+
+    # --- 標籤 [1]: @FLUENT_BIT (Fluent-bit 日誌路由) ---
+    <label @FLUENT_BIT>
+      # 路由 Order App 日誌到 @ORDER_APP label
+      <match order.log>
+        @type relabel
+        @label @ORDER_APP
+      </match>
+
+      # 路由 User App 日誌到 @USER_APP label
+      <match user.log>
+        @type relabel
+        @label @USER_APP
+      </match>
+
+      # 其他日誌（不匹配的）可以記錄或丟棄
+      <match **>
+        @type null
+      </match>
+    </label>
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "fluent.fullname" . }}-fluentd-confd
+  labels:
+    {{- include "fluent.fluentd.labels" . | nindent 4 }}
+data:
+  service-order-app-3.conf: |
+    # Order App 微服務配置
+    # 此配置處理來自 order-app 的所有日誌
+    # 鏈路：fluent-bit-sidecar (HTTP 8888) -> fluentd -> opensearch
+
+    # --- 標籤 [1]: @ORDER_APP (Order App 業務日誌處理) ---
+    <label @ORDER_APP>
+      # Filter 1: 檢查日誌格式和錯誤級別
+      <filter order.log>
+        @type record_transformer
+        enable_ruby true
+        <record>
+          hostname ${begin; "#{Socket.gethostname}"; rescue; "unknown-host"; end}
+          service_name "order-app"
+          log_content ${begin; (record["log"] || record["message"] || "").to_s; rescue; ""; end}
+          log_level ${begin; (record["level"] || "").to_s; rescue; ""; end}
+          
+          # 格式驗證：檢查必需字段
+          format_valid ${begin; has_message = !(record["log"].nil? || record["log"].empty?) || !(record["message"].nil? || record["message"].empty?); has_level = !(record["level"].nil? || record["level"].empty?); has_message && has_level ? "true" : "false"; rescue; "false"; end}
+          
+          # 錯誤檢測：檢查 level 是否為 ERROR
+          is_error ${begin; level = (record["level"] || "").to_s.upcase; log_contains_error = (record["log"].to_s =~ /ERROR/ || record["message"].to_s =~ /ERROR/); (level == "ERROR" || log_contains_error) ? "true" : "false"; rescue; "false"; end}
+          
+          # 業務字段提取
+          order_id ${begin; (record["order_id"] || "").to_s; rescue; ""; end}
+          user_id ${begin; (record["user_id"] || "").to_s; rescue; ""; end}
+          amount ${begin; (record["amount"] || "").to_s; rescue; ""; end}
+          
+          processed_at ${Time.now.utc.iso8601}
+        </record>
+      </filter>
+
+      # Filter 2: 判斷是否應該送到錯誤日誌（需要在前一個 filter 之後執行）
+      <filter order.log>
+        @type record_transformer
+        enable_ruby true
+        <record>
+          # 判斷是否應該送到錯誤日誌
+          # 條件：格式錯誤 OR (格式正確 AND level = ERROR)
+          should_route_to_error ${begin; format_invalid = (record["format_valid"] == "false"); is_business_error = (record["is_error"] == "true"); (format_invalid || is_business_error) ? "true" : "false"; rescue; "true"; end}
+        </record>
+      </filter>
+
+      # Filter 3: 根據 should_route_to_error 路由
+      <match order.log>
+        @type copy
+        <store>
+          # 正常日誌：格式正確且 level != ERROR
+          @type relabel
+          @label @ORDER_APP_NORMAL
+        </store>
+        <store>
+          # 錯誤日誌：格式錯誤 OR level = ERROR
+          @type relabel
+          @label @ORDER_APP_ERRORS
+        </store>
+      </match>
+    </label>
+
+    # --- 標籤 [2]: @ORDER_APP_NORMAL (正常日誌處理) ---
+    <label @ORDER_APP_NORMAL>
+      # 只保留格式正確且非 ERROR 的日誌
+      <filter order.log>
+        @type grep
+        <regexp>
+          key should_route_to_error
+          pattern /^false$/
+        </regexp>
+      </filter>
+
+      # 寫入 OpenSearch 正常日誌索引
+      <match order.log>
+        @type opensearch
+        host {{ include "fluent.opensearchHost" . }}
+        port {{ include "fluent.opensearchPort" . }}
+        scheme {{ include "fluent.opensearchScheme" . }}
+        {{- if not .Values.fluentd.opensearch.verifySsl }}
+        ssl_verify false
+        {{- end }}
+        logstash_format true
+        logstash_prefix order-logs
+        logstash_dateformat %Y.%m.%d
+        <buffer>
+          @type file
+          path /fluentd/buffers/order.buffer
+          flush_at_shutdown true
+          flush_mode interval
+          flush_interval 1s
+          retry_forever true
+          flush_thread_count 2
+          chunk_full_threshold 0.8
+          total_limit_size 512MB
+          chunk_limit_size 16MB
+          queued_chunks_limit_size 4
+          overflow_action throw_exception
+          retry_type exponential_backoff
+          compress_method gzip
+        </buffer>
+        <secondary>
+          @type file
+          path /fluentd/logs/order_errors.log
+          flush_at_shutdown true
+          flush_mode interval
+          flush_interval 1s
+          retry_forever true
+        </secondary>
+      </match>
+    </label>
+
+    # --- 標籤 [3]: @ORDER_APP_ERRORS (錯誤日誌處理) ---
+    <label @ORDER_APP_ERRORS>
+      # 只保留應該送到錯誤日誌的記錄
+      <filter order.log>
+        @type grep
+        <regexp>
+          key should_route_to_error
+          pattern /^true$/
+        </regexp>
+      </filter>
+
+      # 添加錯誤分類信息
+      <filter order.log>
+        @type record_transformer
+        enable_ruby true
+        <record>
+          # 判斷錯誤類型
+          error_type ${begin; if record["format_valid"] == "false"; "format_error"; elsif record["is_error"] == "true"; "business_error"; else; "unknown_error"; end; rescue; "unknown_error"; end}
+          
+          # 錯誤消息
+          error_message ${begin; if record["format_valid"] == "false"; "Order log format validation failed: missing required fields (message/log or level)"; elsif record["is_error"] == "true"; "Order log contains ERROR level or error message"; else; "Unknown error type"; end; rescue; "Unknown error"; end}
+          
+          error_detected_at ${Time.now.utc.iso8601}
+          alert_priority "HIGH"
+        </record>
+      </filter>
+
+      # 寫入錯誤日誌索引
+      <match order.log>
+        @type opensearch
+        host {{ include "fluent.opensearchHost" . }}
+        port {{ include "fluent.opensearchPort" . }}
+        scheme {{ include "fluent.opensearchScheme" . }}
+        {{- if not .Values.fluentd.opensearch.verifySsl }}
+        ssl_verify false
+        {{- end }}
+        logstash_format true
+        logstash_prefix order-error-logs
+        logstash_dateformat %Y.%m.%d
+        <buffer>
+          @type file
+          path /fluentd/buffers/order_errors.buffer
+          flush_at_shutdown true
+          flush_mode interval
+          flush_interval 1s
+          retry_forever true
+          flush_thread_count 2
+          chunk_full_threshold 0.8
+          total_limit_size 512MB
+          chunk_limit_size 16MB
+          queued_chunks_limit_size 4
+          overflow_action throw_exception
+          retry_type exponential_backoff
+          compress_method gzip
+        </buffer>
+        <secondary>
+          @type file
+          path /fluentd/logs/order_format_errors.log
+          flush_at_shutdown true
+          flush_mode interval
+          flush_interval 1s
+          retry_forever true
+        </secondary>
+      </match>
+    </label>
+
+  service-user-app-3.conf: |
+    # User App 微服務配置
+    # 此配置處理來自 user-app 的所有日誌
+    # 鏈路：fluent-bit-sidecar (HTTP 8889) -> fluentd -> opensearch
+
+    # --- 標籤 [1]: @USER_APP (User App 業務日誌處理) ---
+    <label @USER_APP>
+      # Filter 1: 檢查日誌格式和錯誤級別
+      <filter user.log>
+        @type record_transformer
+        enable_ruby true
+        <record>
+          hostname ${begin; "#{Socket.gethostname}"; rescue; "unknown-host"; end}
+          service_name "user-app"
+          log_content ${begin; (record["log"] || record["message"] || "").to_s; rescue; ""; end}
+          log_level ${begin; (record["level"] || "").to_s; rescue; ""; end}
+          
+          # 格式驗證：檢查必需字段
+          format_valid ${begin; has_message = !(record["log"].nil? || record["log"].empty?) || !(record["message"].nil? || record["message"].empty?); has_level = !(record["level"].nil? || record["level"].empty?); has_message && has_level ? "true" : "false"; rescue; "false"; end}
+          
+          # 錯誤檢測：檢查 level 是否為 ERROR
+          is_error ${begin; level = (record["level"] || "").to_s.upcase; log_contains_error = (record["log"].to_s =~ /ERROR/ || record["message"].to_s =~ /ERROR/); (level == "ERROR" || log_contains_error) ? "true" : "false"; rescue; "false"; end}
+          
+          # 業務字段提取
+          user_id ${begin; (record["user_id"] || "").to_s; rescue; ""; end}
+          action ${begin; (record["action"] || "").to_s; rescue; ""; end}
+          ip_address ${begin; (record["ip_address"] || "").to_s; rescue; ""; end}
+          
+          processed_at ${Time.now.utc.iso8601}
+        </record>
+      </filter>
+
+      # Filter 2: 判斷是否應該送到錯誤日誌（需要在前一個 filter 之後執行）
+      <filter user.log>
+        @type record_transformer
+        enable_ruby true
+        <record>
+          # 判斷是否應該送到錯誤日誌
+          # 條件：格式錯誤 OR (格式正確 AND level = ERROR)
+          should_route_to_error ${begin; format_invalid = (record["format_valid"] == "false"); is_business_error = (record["is_error"] == "true"); (format_invalid || is_business_error) ? "true" : "false"; rescue; "true"; end}
+        </record>
+      </filter>
+
+      # Filter 3: 根據 should_route_to_error 路由
+      <match user.log>
+        @type copy
+        <store>
+          # 正常日誌：格式正確且 level != ERROR
+          @type relabel
+          @label @USER_APP_NORMAL
+        </store>
+        <store>
+          # 錯誤日誌：格式錯誤 OR level = ERROR
+          @type relabel
+          @label @USER_APP_ERRORS
+        </store>
+      </match>
+    </label>
+
+    # --- 標籤 [2]: @USER_APP_NORMAL (正常日誌處理) ---
+    <label @USER_APP_NORMAL>
+      # 只保留格式正確且非 ERROR 的日誌
+      <filter user.log>
+        @type grep
+        <regexp>
+          key should_route_to_error
+          pattern /^false$/
+        </regexp>
+      </filter>
+
+      # 寫入 OpenSearch 正常日誌索引
+      <match user.log>
+        @type opensearch
+        host {{ include "fluent.opensearchHost" . }}
+        port {{ include "fluent.opensearchPort" . }}
+        scheme {{ include "fluent.opensearchScheme" . }}
+        {{- if not .Values.fluentd.opensearch.verifySsl }}
+        ssl_verify false
+        {{- end }}
+        logstash_format true
+        logstash_prefix user-logs
+        logstash_dateformat %Y.%m.%d
+        <buffer>
+          @type file
+          path /fluentd/buffers/user.buffer
+          flush_at_shutdown true
+          flush_mode interval
+          flush_interval 1s
+          retry_forever true
+          flush_thread_count 2
+          chunk_full_threshold 0.8
+          total_limit_size 512MB
+          chunk_limit_size 16MB
+          queued_chunks_limit_size 4
+          overflow_action throw_exception
+          retry_type exponential_backoff
+          compress_method gzip
+        </buffer>
+        <secondary>
+          @type file
+          path /fluentd/logs/user_errors.log
+          flush_at_shutdown true
+          flush_mode interval
+          flush_interval 1s
+          retry_forever true
+        </secondary>
+      </match>
+    </label>
+
+    # --- 標籤 [3]: @USER_APP_ERRORS (錯誤日誌處理) ---
+    <label @USER_APP_ERRORS>
+      # 只保留應該送到錯誤日誌的記錄
+      <filter user.log>
+        @type grep
+        <regexp>
+          key should_route_to_error
+          pattern /^true$/
+        </regexp>
+      </filter>
+
+      # 添加錯誤分類信息
+      <filter user.log>
+        @type record_transformer
+        enable_ruby true
+        <record>
+          # 判斷錯誤類型
+          error_type ${begin; if record["format_valid"] == "false"; "format_error"; elsif record["is_error"] == "true"; "business_error"; else; "unknown_error"; end; rescue; "unknown_error"; end}
+          
+          # 錯誤消息
+          error_message ${begin; if record["format_valid"] == "false"; "User log format validation failed: missing required fields (message/log or level)"; elsif record["is_error"] == "true"; "User log contains ERROR level or error message"; else; "Unknown error type"; end; rescue; "Unknown error"; end}
+          
+          error_detected_at ${Time.now.utc.iso8601}
+          alert_priority "HIGH"
+        </record>
+      </filter>
+
+      # 寫入錯誤日誌索引
+      <match user.log>
+        @type opensearch
+        host {{ include "fluent.opensearchHost" . }}
+        port {{ include "fluent.opensearchPort" . }}
+        scheme {{ include "fluent.opensearchScheme" . }}
+        {{- if not .Values.fluentd.opensearch.verifySsl }}
+        ssl_verify false
+        {{- end }}
+        logstash_format true
+        logstash_prefix user-error-logs
+        logstash_dateformat %Y.%m.%d
+        <buffer>
+          @type file
+          path /fluentd/buffers/user_errors.buffer
+          flush_at_shutdown true
+          flush_mode interval
+          flush_interval 1s
+          retry_forever true
+          flush_thread_count 2
+          chunk_full_threshold 0.8
+          total_limit_size 512MB
+          chunk_limit_size 16MB
+          queued_chunks_limit_size 4
+          overflow_action throw_exception
+          retry_type exponential_backoff
+          compress_method gzip
+        </buffer>
+        <secondary>
+          @type file
+          path /fluentd/logs/user_format_errors.log
+          flush_at_shutdown true
+          flush_mode interval
+          flush_interval 1s
+          retry_forever true
+        </secondary>
+      </match>
+    </label>
+{{- end }}

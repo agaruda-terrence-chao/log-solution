@@ -1,0 +1,138 @@
+{{- if .Values.fluentBit.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fluent.fullname" . }}-fluent-bit
+  labels:
+    {{- include "fluent.fluentBit.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.fluentBit.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "fluent.fluentBit.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "fluent.fluentBit.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "fluent.fullname" . }}-fluent-bit-sa
+
+      {{- with .Values.fluentBit.image.pullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+
+      {{- if .Values.fluentBit.persistence.enabled }}
+      initContainers:
+        - name: fix-storage-permissions
+          image: busybox:latest
+          command: ['sh', '-c']
+          args:
+            - |
+              chown -R root:root {{ .Values.fluentBit.config.storage.path }} || true
+              chmod -R 755 {{ .Values.fluentBit.config.storage.path }} || true
+          volumeMounts:
+            - name: storage
+              mountPath: {{ .Values.fluentBit.config.storage.path }}
+      {{- end }}
+
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        fsGroup: 0
+
+      containers:
+        - name: fluent-bit
+          image: "{{ .Values.fluentBit.image.registry }}/{{ .Values.fluentBit.image.repository }}:{{ .Values.fluentBit.image.tag }}"
+          imagePullPolicy: {{ .Values.fluentBit.image.pullPolicy }}
+          command: ["/fluent-bit/bin/fluent-bit"]
+          args: ["-c", "/fluent-bit/etc/fluent-bit.conf"]
+          
+          ports:
+            - name: order-app
+              containerPort: {{ .Values.fluentBit.config.httpInput.orderApp.port }}
+              protocol: TCP
+            - name: user-app
+              containerPort: {{ .Values.fluentBit.config.httpInput.userApp.port }}
+              protocol: TCP
+          
+          env:
+            - name: FLUENTD_HOST
+              value: {{ include "fluent.fluentdHost" . }}
+            - name: FLUENTD_PORT
+              value: "{{ .Values.fluentd.ports.forward }}"
+          
+          volumeMounts:
+            - name: config
+              mountPath: /fluent-bit/etc/fluent-bit.conf
+              subPath: fluent-bit.conf
+              readOnly: true
+            - name: config
+              mountPath: /fluent-bit/etc/parsers.conf
+              subPath: parsers.conf
+              readOnly: true
+            {{- if .Values.fluentBit.persistence.enabled }}
+            - name: storage
+              mountPath: {{ .Values.fluentBit.config.storage.path }}
+            {{- end }}
+          
+          {{- if .Values.fluentBit.probes.readiness.enabled }}
+          readinessProbe:
+            {{- if .Values.fluentBit.probes.readiness.httpGet }}
+            httpGet:
+              path: {{ .Values.fluentBit.probes.readiness.httpGet.path }}
+              port: {{ .Values.fluentBit.probes.readiness.httpGet.port }}
+            {{- else if .Values.fluentBit.probes.readiness.tcpSocket }}
+            tcpSocket:
+              port: {{ .Values.fluentBit.probes.readiness.tcpSocket.port }}
+            {{- end }}
+            initialDelaySeconds: {{ .Values.fluentBit.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.fluentBit.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.fluentBit.probes.readiness.timeoutSeconds }}
+          {{- end }}
+          
+          {{- if .Values.fluentBit.probes.liveness.enabled }}
+          livenessProbe:
+            {{- if .Values.fluentBit.probes.liveness.httpGet }}
+            httpGet:
+              path: {{ .Values.fluentBit.probes.liveness.httpGet.path }}
+              port: {{ .Values.fluentBit.probes.liveness.httpGet.port }}
+            {{- else if .Values.fluentBit.probes.liveness.tcpSocket }}
+            tcpSocket:
+              port: {{ .Values.fluentBit.probes.liveness.tcpSocket.port }}
+            {{- end }}
+            initialDelaySeconds: {{ .Values.fluentBit.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.fluentBit.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.fluentBit.probes.liveness.timeoutSeconds }}
+          {{- end }}
+          
+          resources:
+            {{- toYaml .Values.fluentBit.resources | nindent 12 }}
+      
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "fluent.fullname" . }}-fluent-bit-config
+        {{- if .Values.fluentBit.persistence.enabled }}
+        - name: storage
+          persistentVolumeClaim:
+            claimName: {{ include "fluent.fullname" . }}-fluent-bit-storage
+        {{- end }}
+      
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

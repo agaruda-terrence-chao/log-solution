@@ -1,0 +1,165 @@
+{{- if .Values.fluentd.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fluent.fullname" . }}-fluentd
+  labels:
+    {{- include "fluent.fluentd.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.fluentd.autoscaling.enabled }}
+  replicas: {{ .Values.fluentd.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "fluent.fluentd.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "fluent.fluentd.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "fluent.fullname" . }}-fluentd-sa
+
+      {{- with .Values.fluentd.image.pullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+
+      # Init container to fix buffer directory permissions
+      {{- if .Values.fluentd.persistence.enabled }}
+      initContainers:
+        - name: fix-buffer-permissions
+          image: busybox:latest
+          command: ['sh', '-c']
+          args:
+            - |
+              chown -R 1000:1000 /fluentd/buffers || true
+              chmod -R 755 /fluentd/buffers || true
+              chown -R 1000:1000 /fluentd/logs || true
+              chmod -R 755 /fluentd/logs || true
+          volumeMounts:
+            - name: buffer
+              mountPath: /fluentd/buffers
+            - name: logs
+              mountPath: /fluentd/logs
+      {{- end }}
+
+      # Set securityContext for pod to ensure proper permissions
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+        runAsGroup: 1000
+
+      containers:
+        - name: fluentd
+          image: "{{ .Values.fluentd.image.registry }}/{{ .Values.fluentd.image.repository }}:{{ .Values.fluentd.image.tag }}"
+          imagePullPolicy: {{ .Values.fluentd.image.pullPolicy }}
+
+          ports:
+            - name: forward
+              containerPort: {{ .Values.fluentd.ports.forward }}
+              protocol: TCP
+            - name: forward-udp
+              containerPort: {{ .Values.fluentd.ports.forward }}
+              protocol: UDP
+            - name: http
+              containerPort: {{ .Values.fluentd.ports.http }}
+              protocol: TCP
+            - name: monitor
+              containerPort: 24220
+              protocol: TCP
+
+          command:
+            - fluentd
+          args:
+            - -c
+            - /fluentd/etc/fluent.conf
+
+          env:
+            - name: FLUENTD_CONF
+              value: "/fluentd/etc/fluent.conf"
+            - name: OPENSEARCH_HOST
+              value: {{ include "fluent.opensearchHost" . }}
+            - name: OPENSEARCH_PORT
+              value: "{{ include "fluent.opensearchPort" . }}"
+            - name: OPENSEARCH_SCHEME
+              value: {{ include "fluent.opensearchScheme" . }}
+
+          volumeMounts:
+            - name: config
+              mountPath: /fluentd/etc/fluent.conf
+              subPath: fluent.conf
+              readOnly: true
+            - name: confd
+              mountPath: /fluentd/etc/conf.d
+              readOnly: true
+            {{- if .Values.fluentd.persistence.enabled }}
+            - name: buffer
+              mountPath: /fluentd/buffers
+            - name: logs
+              mountPath: /fluentd/logs
+            {{- else }}
+            - name: buffer
+              mountPath: /fluentd/buffers
+            - name: logs
+              mountPath: /fluentd/logs
+            {{- end }}
+
+          # Set resource requests/limits
+          resources:
+            {{- toYaml .Values.fluentd.resources | nindent 12 }}
+
+          # Readiness probe
+          {{- if .Values.fluentd.probes.readiness.enabled }}
+          readinessProbe:
+            {{- if .Values.fluentd.probes.readiness.httpGet }}
+            httpGet:
+              path: {{ .Values.fluentd.probes.readiness.httpGet.path }}
+              port: {{ .Values.fluentd.probes.readiness.httpGet.port }}
+            {{- else if .Values.fluentd.probes.readiness.tcpSocket }}
+            tcpSocket:
+              port: {{ .Values.fluentd.probes.readiness.tcpSocket.port }}
+            {{- end }}
+            initialDelaySeconds: {{ .Values.fluentd.probes.readiness.initialDelaySeconds | default 15 }}
+            periodSeconds: {{ .Values.fluentd.probes.readiness.periodSeconds | default 10 }}
+            timeoutSeconds: {{ .Values.fluentd.probes.readiness.timeoutSeconds | default 5 }}
+          {{- end }}
+
+          # Liveness probe
+          {{- if .Values.fluentd.probes.liveness.enabled }}
+          livenessProbe:
+            {{- if .Values.fluentd.probes.liveness.httpGet }}
+            httpGet:
+              path: {{ .Values.fluentd.probes.liveness.httpGet.path }}
+              port: {{ .Values.fluentd.probes.liveness.httpGet.port }}
+            {{- else if .Values.fluentd.probes.liveness.tcpSocket }}
+            tcpSocket:
+              port: {{ .Values.fluentd.probes.liveness.tcpSocket.port }}
+            {{- end }}
+            initialDelaySeconds: {{ .Values.fluentd.probes.liveness.initialDelaySeconds | default 30 }}
+            periodSeconds: {{ .Values.fluentd.probes.liveness.periodSeconds | default 20 }}
+            timeoutSeconds: {{ .Values.fluentd.probes.liveness.timeoutSeconds | default 5 }}
+          {{- end }}
+
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "fluent.fullname" . }}-fluentd-config
+        - name: confd
+          configMap:
+            name: {{ include "fluent.fullname" . }}-fluentd-confd
+        {{- if .Values.fluentd.persistence.enabled }}
+        - name: buffer
+          persistentVolumeClaim:
+            claimName: {{ include "fluent.fullname" . }}-fluentd-buffer
+        - name: logs
+          persistentVolumeClaim:
+            claimName: {{ include "fluent.fullname" . }}-fluentd-logs
+        {{- else }}
+        - name: buffer
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}
+        {{- end }}
+{{- end }}

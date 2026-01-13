@@ -1,0 +1,19 @@
+{{- if and .Values.fluentBit.enabled .Values.fluentBit.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "fluent.fullname" . }}-fluent-bit-storage
+  labels:
+    {{- include "fluent.fluentBit.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- range .Values.fluentBit.persistence.accessModes }}
+    - {{ . | quote }}
+    {{- end }}
+  {{- if .Values.fluentBit.persistence.storageClass }}
+  storageClassName: {{ .Values.fluentBit.persistence.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.fluentBit.persistence.size }}
+{{- end }}

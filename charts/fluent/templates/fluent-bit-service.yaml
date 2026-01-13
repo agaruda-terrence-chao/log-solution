@@ -1,0 +1,21 @@
+{{- if .Values.fluentBit.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fluent.fullname" . }}-fluent-bit
+  labels:
+    {{- include "fluent.fluentBit.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.fluentBit.service.type }}
+  ports:
+    - port: {{ .Values.fluentBit.service.ports.orderApp.port }}
+      targetPort: order-app
+      protocol: {{ .Values.fluentBit.service.ports.orderApp.protocol }}
+      name: order-app
+    - port: {{ .Values.fluentBit.service.ports.userApp.port }}
+      targetPort: user-app
+      protocol: {{ .Values.fluentBit.service.ports.userApp.protocol }}
+      name: user-app
+  selector:
+    {{- include "fluent.fluentBit.selectorLabels" . | nindent 4 }}
+{{- end }}

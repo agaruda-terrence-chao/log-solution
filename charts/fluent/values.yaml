@@ -1,0 +1,195 @@
+# Unified Fluent Chart Values
+# 包含 fluent-bit-sidecar 和 fluentd 两个组件
+
+# ============================================================
+# Fluent Bit Sidecar 配置
+# ============================================================
+fluentBit:
+  enabled: true
+  replicaCount: 2
+  
+  image:
+    registry: cr.fluentbit.io
+    repository: fluent/fluent-bit
+    tag: "2.2.0"
+    pullPolicy: IfNotPresent
+    pullSecrets: []
+  
+  # Service configuration
+  service:
+    type: ClusterIP
+    ports:
+      orderApp:
+        port: 8888
+        protocol: TCP
+        targetPort: 8888
+      userApp:
+        port: 8889
+        protocol: TCP
+        targetPort: 8889
+  
+  # Resource requests and limits
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  
+  # Health check probes
+  probes:
+    readiness:
+      enabled: true
+      tcpSocket:
+        port: 8888
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+    liveness:
+      enabled: true
+      tcpSocket:
+        port: 8888
+      initialDelaySeconds: 15
+      periodSeconds: 20
+      timeoutSeconds: 5
+  
+  # PersistentVolumeClaim for buffer storage
+  persistence:
+    enabled: true
+    storageClass: ""  # Use default storage class
+    size: 1Gi  # 50MB buffer + overhead
+    accessModes:
+      - ReadWriteOnce
+  
+  # Fluent Bit configuration
+  config:
+    # System-level configuration
+    system:
+      flush: 5
+      daemon: "off"
+      logLevel: info
+    
+    # Storage configuration
+    storage:
+      path: /var/log/flb-storage/
+      sync: normal
+      checksum: off
+      backlogMemLimit: 5M
+      maxChunksUp: 25
+    
+    # HTTP Input configuration
+    httpInput:
+      orderApp:
+        port: 8888
+        tag: order.log
+      userApp:
+        port: 8889
+        tag: user.log
+
+# ============================================================
+# Fluentd 配置
+# ============================================================
+fluentd:
+  enabled: true
+  replicaCount: 2
+  
+  image:
+    # Harbor registry hostname (no protocol)
+    registry: registry.internal.agaruda.io
+    # Harbor project/repository path (no registry prefix)
+    repository: agaruda/fluentd-aggregator
+    # CI usually outputs a Git commit SHA as the image tag (immutable tag is recommended)
+    tag: "latest"
+    # Optional: use an image digest instead of a tag for maximum immutability
+    digest: ""
+    pullPolicy: Always
+    # Existing Kubernetes docker-registry secret(s) for Harbor
+    pullSecrets:
+      - harbor-secret
+  
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 80
+  
+  # Fluentd container ports
+  ports:
+    forward: 24224  # Forward Protocol
+    http: 9880      # HTTP input
+  
+  # OpenSearch backend configuration
+  # 连接到现有的 OpenSearch service: opensearch-cluster-master.opensearch.svc.cluster.local:9200
+  opensearch:
+    useService: true
+    service:
+      name: opensearch-cluster-master
+      namespace: opensearch
+      port: 9200
+    scheme: http  # 使用 HTTP（OpenSearch 配置中 security 已禁用）
+    verifySsl: false
+  
+  service:
+    type: ClusterIP
+    ports:
+      forward:
+        port: 24224
+        protocol: TCP
+      forwardUDP:
+        port: 24224
+        protocol: UDP
+      http:
+        port: 9880
+        protocol: TCP
+  
+  # Resource requests and limits
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  
+  # Health check probes
+  probes:
+    readiness:
+      enabled: true
+      # 使用 TCP socket 检查 forward protocol 端口（24224）
+      # 因为 Fluentd 配置中没有启用 monitor agent（24220）
+      tcpSocket:
+        port: 24224  # Forward protocol port
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      timeoutSeconds: 5
+    liveness:
+      enabled: true
+      tcpSocket:
+        port: 24224  # Forward protocol port
+      initialDelaySeconds: 30
+      periodSeconds: 20
+      timeoutSeconds: 5
+  
+  # PersistentVolumeClaim for buffer storage
+  persistence:
+    enabled: true
+    storageClass: ""  # Use default storage class
+    size: 10Gi
+    accessModes:
+      - ReadWriteOnce
+  
+  # Fluentd configuration
+  config:
+    # System-level configuration
+    system:
+      logLevel: info
+      workers: 4
+
+# ============================================================
+# 通用配置
+# ============================================================
+# Node selector, tolerations, and affinity
+nodeSelector: {}
+tolerations: []
+affinity: {}

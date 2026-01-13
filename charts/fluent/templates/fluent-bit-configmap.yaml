@@ -1,0 +1,104 @@
+{{- if .Values.fluentBit.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "fluent.fullname" . }}-fluent-bit-config
+  labels:
+    {{- include "fluent.fluentBit.labels" . | nindent 4 }}
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         {{ .Values.fluentBit.config.system.flush }}
+        Daemon        {{ .Values.fluentBit.config.system.daemon }}
+        Log_Level     {{ .Values.fluentBit.config.system.logLevel }}
+        Parsers_File  /fluent-bit/etc/parsers.conf
+        # ============================================================
+        # 文件系統存儲配置（Buffer）
+        # ============================================================
+        # 存儲路徑：容器內的目錄，會映射到 PVC
+        storage.path              {{ .Values.fluentBit.config.storage.path }}
+        storage.sync              {{ .Values.fluentBit.config.storage.sync }}
+        storage.checksum          {{ .Values.fluentBit.config.storage.checksum }}
+        
+        # 內存限制：backlog（積壓數據）在內存中的使用量上限
+        # 當數據需要從文件系統恢復到內存處理時，最多使用 5MB 內存
+        storage.backlog.mem_limit {{ .Values.fluentBit.config.storage.backlogMemLimit }}
+        
+        # 文件系統存儲總大小限制：約 50MB
+        # 計算方式：max_chunks_up (25) × 平均 chunk 大小 (約 2MB) ≈ 50MB
+        # 注意：這是文件系統 buffer 的總大小限制，不是內存限制
+        storage.max_chunks_up     {{ .Values.fluentBit.config.storage.maxChunksUp }}
+
+    # ============================================================
+    # INPUT: HTTP 輸入（模擬兩個微服務）
+    # ============================================================
+
+    # INPUT 1: Order App (端口 {{ .Values.fluentBit.config.httpInput.orderApp.port }})
+    # API: POST http://<service-name>:{{ .Values.fluentBit.config.httpInput.orderApp.port }}/api/v1/order
+    # Body: {"message": "...", "level": "INFO", "order_id": "...", ...}
+    # 注意：HTTP input 默認解析 JSON 格式，無需指定 Format 參數
+    [INPUT]
+        Name                http
+        Listen              0.0.0.0
+        Port                {{ .Values.fluentBit.config.httpInput.orderApp.port }}
+        Tag                 {{ .Values.fluentBit.config.httpInput.orderApp.tag }}
+        # 啟用文件系統存儲（Buffer）
+        storage.type         filesystem
+
+    # INPUT 2: User App (端口 {{ .Values.fluentBit.config.httpInput.userApp.port }})
+    # API: POST http://<service-name>:{{ .Values.fluentBit.config.httpInput.userApp.port }}/api/v1/user
+    # Body: {"message": "...", "level": "INFO", "user_id": "...", ...}
+    # 注意：HTTP input 默認解析 JSON 格式，無需指定 Format 參數
+    [INPUT]
+        Name                http
+        Listen              0.0.0.0
+        Port                {{ .Values.fluentBit.config.httpInput.userApp.port }}
+        Tag                 {{ .Values.fluentBit.config.httpInput.userApp.tag }}
+        # 啟用文件系統存儲（Buffer）
+        storage.type         filesystem
+
+    # ============================================================
+    # FILTER: 處理 Order App 日誌
+    # ============================================================
+
+    [FILTER]
+        Name                modify
+        Match               {{ .Values.fluentBit.config.httpInput.orderApp.tag }}
+        Add                 service_name order-app
+        Add                 log_source fluent-bit-sidecar
+        # 將 HTTP POST 的 message 字段映射到 log 字段
+        Rename              message log
+
+    # ============================================================
+    # FILTER: 處理 User App 日誌
+    # ============================================================
+
+    [FILTER]
+        Name                modify
+        Match               {{ .Values.fluentBit.config.httpInput.userApp.tag }}
+        Add                 service_name user-app
+        Add                 log_source fluent-bit-sidecar
+        # 將 HTTP POST 的 message 字段映射到 log 字段
+        Rename              message log
+
+    # ============================================================
+    # OUTPUT: 發送到 fluentd
+    # ============================================================
+
+    [OUTPUT]
+        Name                forward
+        Match               *
+        Host                {{ include "fluent.fluentdHost" . }}
+        Port                {{ .Values.fluentd.ports.forward }}
+        Require_ack_response True
+        Compress            gzip
+        Retry_Limit         3
+
+  parsers.conf: |
+    [PARSER]
+        Name   docker
+        Format json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L
+        Time_Keep   On
+{{- end }}
