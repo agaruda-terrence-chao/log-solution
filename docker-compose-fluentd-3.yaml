@@ -1,0 +1,97 @@
+services:
+  # Fluent-bit Sidecar：日誌收集 sidecar
+  # 使用 HTTP input 接收來自 order-app 和 user-app 的日誌，並轉發到 fluentd
+  fluent-bit-sidecar:
+    image: cr.fluentbit.io/fluent/fluent-bit:2.2.0
+    container_name: log-solution-fluentd-3-fluent-bit-sidecar
+    user: root
+    # 掛載配置文件
+    volumes:
+      - ./fluent-bit-sidecar/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ./fluent-bit-sidecar/parsers.conf:/fluent-bit/etc/parsers.conf:ro
+      # 掛載 Fluent Bit 文件系統存儲目錄（Buffer）
+      - ./fluent-bit-sidecar/flb-storage:/var/log/flb-storage/
+    ports:
+      - "8888:8888"  # Order App HTTP input 端口
+      - "8889:8889"  # User App HTTP input 端口
+    command: ["/fluent-bit/bin/fluent-bit", "-c", "/fluent-bit/etc/fluent-bit.conf"]
+    depends_on:
+      fluentd:
+        condition: service_healthy
+
+  # Fluentd：日誌收集與轉發中心
+  fluentd:
+    build: ./fluentd
+    container_name: log-solution-fluentd-3
+    volumes:
+      - ./fluentd/conf/fluent3.conf:/fluentd/etc/fluent.conf:ro
+      - ./fluentd/conf.d:/fluentd/etc/conf.d:ro
+      - ./fluentd/buffers:/fluentd/buffers
+      - ./fluentd/logs:/fluentd/logs
+    ports:
+      - "24224:24224"      # Fluentd Forward Protocol
+      - "24224:24224/udp"  # UDP 支持
+      - "9880:9880"        # Fluentd HTTP input
+    healthcheck:
+      # # 確認 forward 或 http 端口可用即視為健康
+      # test: ["CMD-SHELL", "nc -z localhost 9880 || exit 1"]
+      # 修正：Debian 映像檔不一定有 nc，改用 Ruby Socket 檢查
+      test: ["CMD-SHELL", "ruby -e \"require 'socket'; begin; TCPSocket.new('127.0.0.1', 24224).close; rescue; exit 1; end\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    depends_on:
+      opensearch:
+        condition: service_healthy
+
+  # OpenSearch：日誌存儲與搜索
+  opensearch:
+    image: opensearchproject/opensearch:2.11.0
+    container_name: log-solution-fluentd-opensearch
+    environment:
+      - "discovery.type=single-node"
+      - "DISABLE_SECURITY_PLUGIN=true"
+      - "DISABLE_INSTALL_DEMO_CONFIG=true"
+      - "network.host=0.0.0.0"
+    expose:
+      - "9200"
+    ports:
+      - "9200:9200"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  # OpenSearch Dashboards：日誌可視化
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.11.0
+    container_name: log-solution-fluentd-opensearch-dashboards
+    links:
+      - opensearch
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:5601:5601"
+    volumes:
+      - ./opensearch-dashboards/config/opensearch_dashboards.yml:/usr/share/opensearch-dashboards/config/opensearch_dashboards.yml:ro
+    environment:
+      - "OPENSEARCH_HOSTS=http://opensearch:9200"
+      - "DISABLE_SECURITY_DASHBOARDS_PLUGIN=true"
+      - "i18n.locale=en"
+
+volumes:
+  fluentd-buffers:
+    driver: local
+  fluent-bit-storage:
+    driver: local

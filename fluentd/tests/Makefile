@@ -117,6 +117,26 @@ test-fastapi: check-local
 		$(DOCKER_RUN) ruby integration/services/fastapi_app/test_fastapi_app_etl.rb; \
 	fi
 
+.PHONY: test-order-app
+test-order-app: check-local
+	@echo "📦 運行 Order App ETL 測試..."
+	@if [ "$(USE_LOCAL)" = "true" ]; then \
+		bundle exec ruby integration/services/order_app/test_order_app_etl.rb; \
+	else \
+		$(MAKE) image-exists > /dev/null 2>&1; \
+		$(DOCKER_RUN) ruby integration/services/order_app/test_order_app_etl.rb; \
+	fi
+
+.PHONY: test-user-app
+test-user-app: check-local
+	@echo "👤 運行 User App ETL 測試..."
+	@if [ "$(USE_LOCAL)" = "true" ]; then \
+		bundle exec ruby integration/services/user_app/test_user_app_etl.rb; \
+	else \
+		$(MAKE) image-exists > /dev/null 2>&1; \
+		$(DOCKER_RUN) ruby integration/services/user_app/test_user_app_etl.rb; \
+	fi
+
 # ============================================================
 # 辅助命令
 # ============================================================
@@ -156,6 +176,8 @@ help:
 	@echo "  make test-unit         - 運行單元測試"
 	@echo "  make test-integration  - 運行整合測試"
 	@echo "  make test-fastapi      - 運行 FastAPI 測試"
+	@echo "  make test-order-app    - 運行 Order App 測試"
+	@echo "  make test-user-app     - 運行 User App 測試"
 	@echo ""
 	@echo "構建命令:"
 	@echo "  make build-image       - 構建測試環境 Docker 鏡像"
